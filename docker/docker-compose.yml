@@ -1,0 +1,76 @@
+version: '3'
+services:
+  db:
+    image: postgres:latest
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - PGPORT
+    volumes:
+      - ./init-roles.sql:/docker-entrypoint-initdb.d/init-roles.sql
+    ports:
+      - "5455:5455"
+    networks:
+      - xorro-network
+
+  flyway:
+    image: 024848447392.dkr.ecr.ap-southeast-1.amazonaws.com/xorro/xorro-flyway:latest
+    environment:
+      - MICRONAUT_ENVIRONMENTS
+      - SERVER_PORT
+      - POSTGRES_HOST
+    depends_on:
+      - db
+    command: ["migrate"]
+    restart: "no"
+    networks:
+      - xorro-network
+
+  auth-service:
+    image: 024848447392.dkr.ecr.ap-southeast-1.amazonaws.com/xorro/xorro-auth-service:latest
+    environment:
+      - MICRONAUT_ENVIRONMENTS
+      - POSTGRES_HOST
+    depends_on:
+      - db
+      - flyway
+    ports:
+      - "8084:8084"
+    restart: always
+    networks:
+      - xorro-network
+
+  campaign-service:
+    image: 024848447392.dkr.ecr.ap-southeast-1.amazonaws.com/xorro/xorro-campaign-service:latest
+    environment:
+      - MICRONAUT_ENVIRONMENTS
+      - POSTGRES_HOST
+    depends_on:
+      - db
+      - flyway
+      - auth-service
+    ports:
+      - "8083:8083"
+    restart: always
+    networks:
+      - xorro-network
+
+  peeps-user-service:
+    image: 024848447392.dkr.ecr.ap-southeast-1.amazonaws.com/xorro/peeps-user-service:latest
+    environment:
+      - MICRONAUT_ENVIRONMENTS
+      - POSTGRES_HOST
+    depends_on:
+      - db
+      - flyway
+      - auth-service
+    ports:
+      - "8093:8093"
+    restart: always
+    networks:
+      - xorro-network
+
+networks:
+  xorro-network:
+    driver: bridge

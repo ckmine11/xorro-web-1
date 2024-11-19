@@ -1,0 +1,95 @@
+name: CI - Release
+on:
+  push:
+    branches: ["main"] 
+jobs:
+  create_semantic_release:
+    runs-on: ubuntu-latest
+    outputs:
+      RELEASE_TAG: ${{ steps.get_latest_tag.outputs.RELEASE_TAG }}
+      COMMIT_HASH: ${{ steps.get_latest_tag.outputs.COMMIT_HASH }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20.8.1'
+
+      - name: Semantic Release
+        id: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          npx semantic-release
+
+      - name: Get latest git tag
+        id: get_latest_tag
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0)
+          commit_hash=$(git show-ref --tags -s "$latest_tag")
+          echo "RELEASE_TAG=$latest_tag" >> $GITHUB_OUTPUT
+          echo "COMMIT_HASH=$commit_hash" >> $GITHUB_OUTPUT
+
+      - name: Show Latest Release version and hash
+        run: |
+          echo "The latest release tag is: ${{ steps.get_latest_tag.outputs.RELEASE_TAG }}"
+          echo "The commit hash for the latest tag is: ${{ steps.get_latest_tag.outputs.COMMIT_HASH }}"
+
+  docker_build_and_push:
+    needs: create_semantic_release
+    runs-on: nst-build
+
+    env:
+      REGION: ap-southeast-1
+
+    steps:
+      - uses: actions/checkout@v3
+        name: Check out code
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push Docker image for Stage
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          GIT_SHA=$(echo "${{ needs.create_semantic_release.outputs.COMMIT_HASH }}" | head -c5)
+          docker build \
+            --build-arg "NEXT_PUBLIC_HOST=${{ secrets.NEXT_PUBLIC_HOST_STAGING }}" \
+            --build-arg "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL_STAGING }}" \
+            --build-arg "NEXT_PUBLIC_AUTH0_DOMAIN"=${{ secrets.NEXT_PUBLIC_AUTH0_DOMAIN_STAGING }} \
+            --build-arg "NEXT_PUBLIC_AUTH0_CLIENT_ID"=${{ secrets.NEXT_PUBLIC_AUTH0_CLIENT_ID_STAGING }} \
+            -t $ECR_REGISTRY/xorro/xorro-web:$GIT_SHA .
+          docker tag $ECR_REGISTRY/xorro/xorro-web:$GIT_SHA $ECR_REGISTRY/xorro/xorro-web:${{ needs.create_semantic_release.outputs.RELEASE_TAG }}_stage
+          docker tag $ECR_REGISTRY/xorro/xorro-web:$GIT_SHA $ECR_REGISTRY/xorro/xorro-web:latest
+          docker push $ECR_REGISTRY/xorro/xorro-web:$GIT_SHA
+          docker push $ECR_REGISTRY/xorro/xorro-web:${{ needs.create_semantic_release.outputs.RELEASE_TAG }}_stage
+          docker push $ECR_REGISTRY/xorro/xorro-web:latest
+
+      - name: Build & push Docker image for Prod
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          GIT_SHA=$(echo "${{ needs.create_semantic_release.outputs.COMMIT_HASH }}" | head -c5)
+          docker build \
+            --build-arg "NEXT_PUBLIC_HOST=${{ secrets.NEXT_PUBLIC_HOST_PROD }}" \
+            --build-arg "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL_PROD }}" \
+            --build-arg "NEXT_PUBLIC_AUTH0_DOMAIN"=${{ secrets.NEXT_PUBLIC_AUTH0_DOMAIN_PROD }} \
+            --build-arg "NEXT_PUBLIC_AUTH0_CLIENT_ID"=${{ secrets.NEXT_PUBLIC_AUTH0_CLIENT_ID_PROD }} \
+            -t $ECR_REGISTRY/xorro/xorro-web-prod:$GIT_SHA .
+          docker tag $ECR_REGISTRY/xorro/xorro-web-prod:$GIT_SHA $ECR_REGISTRY/xorro/xorro-web-prod:${{ needs.create_semantic_release.outputs.RELEASE_TAG }}_prod
+          docker tag $ECR_REGISTRY/xorro/xorro-web-prod:$GIT_SHA $ECR_REGISTRY/xorro/xorro-web-prod:latest
+          docker push $ECR_REGISTRY/xorro/xorro-web-prod:$GIT_SHA
+          docker push $ECR_REGISTRY/xorro/xorro-web-prod:${{ needs.create_semantic_release.outputs.RELEASE_TAG }}_prod
+          docker push $ECR_REGISTRY/xorro/xorro-web-prod:latest

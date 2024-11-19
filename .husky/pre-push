@@ -1,0 +1,5 @@
+eval "$(fnm env)"
+fnm use $(cat .nvmrc) --log-level quiet
+bun run test
+bun run tsc
+bun run lint
